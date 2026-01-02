@@ -1,0 +1,61 @@
+---
+title: "VREplus Analysis"
+author: "Sebastian Wolf"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(survival)
+library(survminer)
+```
+
+```{r}
+vre_patients <- readxl::read_excel("VREplus_Basisdoku.xlsx", sheet = "Dokukohorte_AML_Intensiv")
+
+vre_status <- readxl::read_excel("Kopie von ECFCR.xlsx", sheet = "ECFCR")
+
+# identify patients with XDR VRE status
+vre_plus_cols <- c("AB_Tigecyclin", "AB_Teicoplani", "AB_Linezolid", "AB_Daptomycin")
+
+vre_plus_patients <- vre_status %>% 
+  filter(PAT_PATIENTENNR %in% vre_patients$pat_patientennr) %>% 
+  filter(if_any(.cols = vre_plus_cols, ~ . == "R")) %>% 
+  pull(PAT_PATIENTENNR)
+
+vre_patients <- vre_patients %>% 
+  janitor::clean_names()
+
+vre_patients <- vre_patients %>% 
+  mutate(vre_plus = pat_patientennr %in% vre_plus_patients)
+
+vre_patients <- vre_patients %>% 
+  mutate(age_cat = case_when(alter_bei_ed_aml < 60 ~ "<60",
+                             alter_bei_ed_aml >= 60 & alter_bei_ed_aml < 70 ~ "60-70",
+                             alter_bei_ed_aml >= 70 ~ ">70"))
+
+# calculate 5-year os and rfs
+vre_patients <- vre_patients %>% 
+  mutate(osm = time_length(letztes_fu_datum - datum_ed,unit = "months"),
+         rfsm = time_length(progress_rezidiv_datum - datum_ed, unit = "months"),
+         osm = ifelse(osm > 60, 60, osm),
+         rfsm = ifelse(rfsm >60, 60, rfsm),
+         tod_ja_1_nein_2 = ifelse(tod_ja_1_nein_2 == 1,1,0),
+         osm_status = ifelse(osm <= 60, tod_ja_1_nein_2, 0),
+         rfs_status = ifelse(rfsm <= 60, progress_rezidiv, 0))
+```
+
+
+## Exploration - VREplus status impact on OS
+
+```{r}
+vre_patients %>% 
+  ggsurvplot(survfit(Surv(osm, osm_status) ~ genetische_risikogruppe_nach_eln2022,.),., pval = T, risk.table = T)
+
+vre_patients %>% 
+  as.data.frame() %>% 
+  ggforest(coxph(Surv(osm, osm_status) ~ genetische_risikogruppe_nach_eln2022 + vre_plus,.),.)
+```
+
+
